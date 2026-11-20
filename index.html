@@ -1,0 +1,22 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#19392d"><title>Puddlewick · Private game</title><style>
+*{box-sizing:border-box}body{margin:0;min-height:100svh;background:#162e25;color:#f3efdd;font:16px system-ui;display:grid;place-items:center;padding:22px}main{width:min(410px,100%);border-top:2px solid #a7bea1;padding:30px 0}h1{font:normal clamp(50px,11vw,78px)/1.05 Georgia,serif;letter-spacing:-.045em;margin:0 0 14px}p{color:#ccd6c7;line-height:1.45}label{display:block;margin:28px 0 8px}input,button{font:inherit;width:100%;border-radius:4px;padding:12px}input{background:#203c30;color:white;border:1px solid #819783}button{border:0;background:#d6e4b8;color:#1c3427;font-weight:650;margin-top:10px;cursor:pointer}button:disabled{opacity:.65}#status{min-height:1.5em}small{color:#b1c2ad}
+</style></head><body><main><h1>Puddlewick</h1><p>Enter the game passcode from your host to explore the neighbourhood.</p><form id="unlock"><label for="pass">Game passcode</label><input id="pass" type="password" required autocomplete="current-password" autocapitalize="none" spellcheck="false"><button id="enter">Enter neighbourhood</button></form><p id="status" role="status" aria-live="polite"></p></main>
+<script>
+const unhex=s=>Uint8Array.from(s.match(/../g),pair=>parseInt(pair,16));
+const panel=document.getElementById('status'),button=document.getElementById('enter');
+document.getElementById('unlock').onsubmit=async event=>{
+ event.preventDefault();button.disabled=true;panel.textContent='Checking passcode…';
+ try{
+  const manifest=await fetch('build.json',{cache:'no-cache'});if(!manifest.ok)throw Error('Could not load the release. Please try again.');
+  const files=await manifest.json(),settings=files.game;
+  const password=await crypto.subtle.importKey('raw',new TextEncoder().encode(document.getElementById('pass').value.trim()),'PBKDF2',false,['deriveKey']);
+  const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:unhex(files.salt),iterations:600000},password,{name:'AES-GCM',length:256},false,['decrypt']);
+  function decrypt(bytes,iv){return crypto.subtle.decrypt({name:'AES-GCM',iv:unhex(iv)},key,bytes)}
+  try{await decrypt(unhex(files.check.data),files.check.iv)}catch{throw Error('That passcode didn’t unlock the game. Try again.')}
+  panel.textContent='Opening the neighbourhood…';const asset=await fetch(settings.file);if(!asset.ok)throw Error('Could not download the game. Please retry.');
+  const data=await decrypt(await asset.arrayBuffer(),settings.iv);
+  const html=await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  document.open();document.write(html);document.close();
+ }catch(e){panel.textContent=e.message;button.disabled=false}
+};
+</script></body></html>
