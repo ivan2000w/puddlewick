@@ -7,27 +7,58 @@ const panel=document.getElementById('status'),button=document.getElementById('en
 document.getElementById('unlock').onsubmit=async event=>{
  event.preventDefault();button.disabled=true;panel.textContent='Checking passcode…';
  try{
-  const manifest=await fetch('build.json',{cache:'no-cache'});if(!manifest.ok)throw Error('Could not load the release. Please try again.');
-  const files=await manifest.json(),settings=files.game;
+  const manifest=await fetch('release-v2.json',{cache:'no-cache'});if(!manifest.ok)throw Error('Could not load the release. Please try again.');
+  const files=await manifest.json();
   const password=await crypto.subtle.importKey('raw',new TextEncoder().encode(document.getElementById('pass').value.trim()),'PBKDF2',false,['deriveKey']);
   const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:unhex(files.salt),iterations:600000},password,{name:'AES-GCM',length:256},false,['decrypt']);
   function decrypt(bytes,iv){return crypto.subtle.decrypt({name:'AES-GCM',iv:unhex(iv)},key,bytes)}
   try{await decrypt(unhex(files.check.data),files.check.iv)}catch{throw Error('That passcode didn’t unlock the game. Try again.')}
   document.getElementById('pass').blur();
-  panel.textContent='Downloading the neighbourhood…';
-  const meter=document.getElementById('download');meter.removeAttribute('value');meter.hidden=false;
-  const bytes=await new Promise((resolve,reject)=>{
-    const request=new XMLHttpRequest();
-    request.open('GET',settings.file);request.responseType='arraybuffer';
-    request.onprogress=e=>{if(e.lengthComputable){meter.max=e.total;meter.value=e.loaded}};
-    const failed=()=>reject(Error('The download stopped. Check your connection and tap Play to retry.'));
-    request.onerror=request.onabort=failed;
-    request.onload=()=>{if(request.status===200)resolve(request.response);else failed()};
-    request.send();
-  });
-  meter.hidden=true;panel.textContent='Preparing the game…';
-  const data=await decrypt(bytes,settings.iv);
-  const html=await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  const meter=document.getElementById('download');
+  async function download(part,label){
+   panel.textContent=label;meter.max=part.bytes;meter.value=0;meter.hidden=false;
+   try{
+    return await new Promise((resolve,reject)=>{
+     const request=new XMLHttpRequest();request.open('GET',part.file);request.responseType='arraybuffer';
+     request.onprogress=e=>{meter.value=e.loaded};
+     const failed=()=>reject(Error('The download stopped. Check your connection and tap Play to retry.'));
+     request.onerror=request.onabort=failed;
+     request.onload=()=>{if(request.status===200)resolve(request.response);else failed()};
+     request.send();
+    });
+   }finally{meter.hidden=true}
+  }
+  async function unpack(bytes,part){
+   const data=await decrypt(bytes,part.iv);
+   return new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+  }
+  // The cache contains only authenticated, encrypted world data. The key stays in this login.
+  let cache;
+  const worldURL=new URL(files.world.file,location.href).href;
+  try{cache=await caches.open('puddlewick-world:'+new URL('.',location.href).pathname)}catch{}
+  async function loadWorld(){
+   if(cache){
+    try{
+     const cached=await cache.match(worldURL);
+     if(cached){panel.textContent='Opening saved neighbourhood…';return await unpack(await cached.arrayBuffer(),files.world)}
+    }catch{try{await cache.delete(worldURL)}catch{}}
+   }
+   const bytes=await download(files.world,'Downloading neighbourhood scenery…');
+   const world=await unpack(bytes,files.world);
+   if(cache){
+    try{
+     await cache.put(worldURL,new Response(bytes));
+     for(const entry of await cache.keys())if(entry.url!==worldURL)await cache.delete(entry);
+    }catch{}
+   }
+   return world;
+  }
+  const client=await unpack(await download(files.game,'Loading game…'),files.game);
+  const slot='/*INSERT_CACHED_WORLD*/';
+  if(!client.includes(slot))throw Error('Could not read this release. Refresh and try again.');
+  const world=await loadWorld();
+  panel.textContent='Preparing the game…';
+  const html=client.replace(slot,()=>world);
   document.open();document.write(html);document.close();
  }catch(e){document.getElementById('download').hidden=true;panel.textContent=e.message;button.disabled=false}
 };
