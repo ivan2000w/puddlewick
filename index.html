@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#19392d"><title>Puddlewick · Private game</title><style>
-*{box-sizing:border-box}body{margin:0;min-height:100svh;background:#162e25;color:#f3efdd;font:16px system-ui;display:grid;place-items:center;padding:22px}main{width:min(410px,100%);border-top:2px solid #a7bea1;padding:30px 0}h1{font:normal clamp(50px,11vw,78px)/1.05 Georgia,serif;letter-spacing:-.045em;margin:0 0 14px}p{color:#ccd6c7;line-height:1.45}label{display:block;margin:28px 0 8px}input,button{font:inherit;width:100%;border-radius:4px;padding:12px}input{background:#203c30;color:white;border:1px solid #819783}button{border:0;background:#d6e4b8;color:#1c3427;font-weight:650;margin-top:10px;cursor:pointer}button:disabled{opacity:.65}#status{min-height:1.5em}small{color:#b1c2ad}
-</style></head><body><main><h1>Puddlewick</h1><p>Enter the game passcode from your host to explore the neighbourhood.</p><form id="unlock"><label for="pass">Game passcode</label><input id="pass" type="password" required autocomplete="current-password" autocapitalize="none" spellcheck="false"><button id="enter">Enter neighbourhood</button></form><p id="status" role="status" aria-live="polite"></p></main>
+*{box-sizing:border-box}body{margin:0;min-height:100svh;background:#162e25;color:#f3efdd;font:16px system-ui;display:grid;place-items:center;padding:22px}main{width:min(410px,100%);border-top:2px solid #a7bea1;padding:30px 0}h1{font:normal clamp(50px,11vw,78px)/1.05 Georgia,serif;letter-spacing:-.045em;margin:0 0 14px}p{color:#ccd6c7;line-height:1.45}label{display:block;margin:28px 0 8px}input,button{font:inherit;width:100%;border-radius:4px;padding:12px}input{background:#203c30;color:white;border:1px solid #819783}button{border:0;background:#d6e4b8;color:#1c3427;font-weight:650;margin-top:10px;cursor:pointer}button:disabled{opacity:.65}progress{width:100%;height:7px;accent-color:#bed496}#status{min-height:1.5em;margin-bottom:4px}small{color:#b1c2ad}
+</style></head><body><main><h1>Puddlewick</h1><p>Enter the game passcode from your host to explore the neighbourhood.</p><form id="unlock"><label for="pass">Game passcode</label><input id="pass" type="password" required enterkeyhint="go" autocorrect="off" autocomplete="current-password" autocapitalize="none" spellcheck="false"><button id="enter">Play</button></form><p id="status" role="status" aria-live="polite"></p><progress id="download" aria-label="Game download" hidden></progress></main>
 <script>
 const unhex=s=>Uint8Array.from(s.match(/../g),pair=>parseInt(pair,16));
 const panel=document.getElementById('status'),button=document.getElementById('enter');
@@ -13,10 +13,22 @@ document.getElementById('unlock').onsubmit=async event=>{
   const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt:unhex(files.salt),iterations:600000},password,{name:'AES-GCM',length:256},false,['decrypt']);
   function decrypt(bytes,iv){return crypto.subtle.decrypt({name:'AES-GCM',iv:unhex(iv)},key,bytes)}
   try{await decrypt(unhex(files.check.data),files.check.iv)}catch{throw Error('That passcode didn’t unlock the game. Try again.')}
-  panel.textContent='Opening the neighbourhood…';const asset=await fetch(settings.file);if(!asset.ok)throw Error('Could not download the game. Please retry.');
-  const data=await decrypt(await asset.arrayBuffer(),settings.iv);
+  document.getElementById('pass').blur();
+  panel.textContent='Downloading the neighbourhood…';
+  const meter=document.getElementById('download');meter.removeAttribute('value');meter.hidden=false;
+  const bytes=await new Promise((resolve,reject)=>{
+    const request=new XMLHttpRequest();
+    request.open('GET',settings.file);request.responseType='arraybuffer';
+    request.onprogress=e=>{if(e.lengthComputable){meter.max=e.total;meter.value=e.loaded}};
+    const failed=()=>reject(Error('The download stopped. Check your connection and tap Play to retry.'));
+    request.onerror=request.onabort=failed;
+    request.onload=()=>{if(request.status===200)resolve(request.response);else failed()};
+    request.send();
+  });
+  meter.hidden=true;panel.textContent='Preparing the game…';
+  const data=await decrypt(bytes,settings.iv);
   const html=await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
   document.open();document.write(html);document.close();
- }catch(e){panel.textContent=e.message;button.disabled=false}
+ }catch(e){document.getElementById('download').hidden=true;panel.textContent=e.message;button.disabled=false}
 };
 </script></body></html>
